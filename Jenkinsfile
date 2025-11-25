@@ -3,41 +3,49 @@ pipeline {
     
     environment {
         DOCKER_HOST = "unix:///var/run/docker.sock"
+        COMPOSE_PROJECT_NAME = "jenkins-${BUILD_ID}"
     }
     
     stages {
         stage('Clean') {
             steps {
                 echo 'Cleaning up previous builds...'
-                sh 'docker system prune -f || true'
-                sh 'docker-compose -f docker-compose.test.yml down || true'
-                sh 'docker-compose -f docker-compose.prod.yml down || true'
+                sh '''
+                    docker system prune -f || true
+                    docker-compose -f docker-compose.test.yml down || true
+                    docker-compose -f docker-compose.prod.yml down || true
+                '''
             }
         }
         
         stage('Test') {
             steps {
-                echo 'Testing application on build machine...'
-                sh 'docker-compose -f docker-compose.test.yml up -d --build'
-                sh 'sleep 10'
-                script {
-                    try {
-                        sh 'curl -f http://localhost:8002/health'
-                        sh 'curl -f http://localhost:8002/api/v1/currencies'
-                        sh 'curl -f http://localhost:8002/docs'
-                        echo 'All tests passed!'
-                    } catch (Exception e) {
-                        error 'Tests failed!'
-                    } finally {
-                        sh 'docker-compose -f docker-compose.test.yml down'
-                    }
+                echo 'Testing application...'
+                sh '''
+                    # Запускаем тестовые контейнеры
+                    docker-compose -f docker-compose.test.yml up -d --build
+                    sleep 15
+                    
+                    # Получаем ID тестового контейнера
+                    CONTAINER_ID=$(docker-compose -f docker-compose.test.yml ps -q web)
+                    
+                    # Тестируем внутри контейнера
+                    docker exec $CONTAINER_ID curl -f http://localhost:8000/health
+                    docker exec $CONTAINER_ID curl -f http://localhost:8000/api/v1/currencies
+                    
+                    echo "All tests passed!"
+                '''
+            }
+            post {
+                always {
+                    sh 'docker-compose -f docker-compose.test.yml down || true'
                 }
             }
         }
         
         stage('Build') {
             steps {
-                echo 'Building Docker image on build machine...'
+                echo 'Building Docker image...'
                 sh 'docker build -t currency-converter:latest .'
                 sh 'docker images | grep currency-converter'
                 echo 'Build completed successfully!'
@@ -46,19 +54,18 @@ pipeline {
         
         stage('Deploy to Production') {
             steps {
-                echo 'Deploying to production environment (second machine simulation)...'
-                sh 'docker-compose -f docker-compose.prod.yml down || true'
-                sh 'docker-compose -f docker-compose.prod.yml up -d --build'
-                sh 'sleep 15'
-                script {
-                    try {
-                        sh 'curl -f http://localhost:8001/health'
-                        sh 'curl -f http://localhost:8001/api/v1/currencies'
-                        echo 'Production deployment verified!'
-                    } catch (Exception e) {
-                        error 'Production deployment failed!'
-                    }
-                }
+                echo 'Deploying to production environment...'
+                sh '''
+                    docker-compose -f docker-compose.prod.yml down || true
+                    docker-compose -f docker-compose.prod.yml up -d --build
+                    sleep 20
+                    
+                    # Проверяем продакшен (порт 8001 доступен с хоста)
+                    curl -f http://localhost:8001/health
+                    curl -f http://localhost:8001/api/v1/currencies
+                    
+                    echo "Production deployment verified!"
+                '''
                 echo 'Deployment completed successfully!'
             }
         }

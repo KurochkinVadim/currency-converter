@@ -4,6 +4,6 @@ services:
   web:
     build: .
     ports:
-      - "8002:8000"  # Ещё один порт для тестов
+      - "8002:8000"  # Порт для тестов
     environment:
       - DATABASE_URL=sqlite:///./test.db
